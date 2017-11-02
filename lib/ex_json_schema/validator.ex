@@ -26,8 +26,13 @@ defmodule ExJsonSchema.Validator do
 
   @spec validate(Root.t, Schema.resolved, ExJsonSchema.data, [String.t | integer]) :: errors_with_list_paths
   def validate(root, schema, data, path \\ []) do
-    Enum.flat_map(schema, &validate_aspect(root, schema, &1, data))
-    |> Enum.map(fn {msg, p} -> {msg, path ++ p} end)
+    try do
+      Enum.flat_map(schema, &validate_aspect(root, schema, &1, data))
+      |> Enum.map(fn {msg, p} -> {msg, path ++ p} end)
+    rescue
+      e in Protocol.UndefinedError -> IO.inspect([root, schema, data, path])
+                                      raise e
+    end
   end
 
   @spec valid?(Root.t, ExJsonSchema.data) :: boolean

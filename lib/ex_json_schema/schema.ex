@@ -12,12 +12,39 @@ defmodule ExJsonSchema.Schema do
   end
 
   alias ExJsonSchema.Schema.Draft4
+  alias ExJsonSchema.Schema.Draft6
   alias ExJsonSchema.Schema.Root
 
   @type resolved :: %{String.t => ExJsonSchema.json_value | (Root.t -> {Root.t, resolved})}
 
   @current_draft_schema_url "http://json-schema.org/schema"
   @draft4_schema_url "http://json-schema.org/draft-04/schema"
+  @draft6_schema_url "http://json-schema.org/draft-06/schema"
+
+  @spec resolve(boolean) :: Root.t | no_return
+  def resolve(false) do
+    %Root{schema: 
+      %{"not" =>
+      %{"anyOf" => [
+        %{"type" => "object"},   
+        %{"type" => "array"},   
+        %{"type" => "boolean"},   
+        %{"type" => "string"},   
+        %{"type" => "number"},   
+        %{"type" => "null"}   
+      ]}}}
+  end
+
+  def resolve(true) do
+    %Root{schema: %{"anyOf" => [
+        %{"type" => "object"},   
+        %{"type" => "array"},   
+        %{"type" => "boolean"},   
+        %{"type" => "string"},   
+        %{"type" => "number"},   
+        %{"type" => "null"}   
+      ]}}
+  end
 
   @spec resolve(Root.t) :: Root.t | no_return
   def resolve(root = %Root{}), do: resolve_root(root)
@@ -34,6 +61,27 @@ defmodule ExJsonSchema.Schema do
     get_ref_schema_with_schema(root.refs[url], path, ref)
   end
 
+  defp resolve_root(false) do
+    %Root{schema: 
+      %{"anyOf" => [
+          %{"type" => "null"}
+        ]} 
+    }
+  end
+
+  defp resolve_root(true) do
+    %Root{schema: 
+      %{"anyOf" => [
+          %{"type" => "object"},
+          %{"type" => "array"},
+          %{"type" => "boolean"},
+          %{"type" => "string"},
+          %{"type" => "number"},
+          %{"type" => "null"}
+        ]} 
+    }
+  end
+
   defp resolve_root(root) do
     assert_supported_schema_version(Map.get(root.schema, "$schema", @current_draft_schema_url <> "#"))
     assert_valid_schema(root.schema)
@@ -46,12 +94,14 @@ defmodule ExJsonSchema.Schema do
   end
 
   defp assert_valid_schema(schema) do
-    unless meta?(schema) do
-      case ExJsonSchema.Validator.validate(resolve(Draft4.schema), schema) do
-        {:error, errors} ->
-          raise InvalidSchemaError, message: "schema did not pass validation against its meta-schema: #{inspect(errors)}"
+    case {meta04?(schema), meta06?(schema)} do
+      {false, false} ->
+        schema_module = choose_meta_schema_validation_module(schema)
+        case ExJsonSchema.Validator.validate(resolve(schema_module.schema()), schema) do
+          {:error, errors} -> raise InvalidSchemaError, message: "schema did not pass validation against its meta-schema: #{inspect(errors)}"
+          _ -> nil
+        end
         _ -> nil
-      end
     end
   end
 
@@ -59,6 +109,7 @@ defmodule ExJsonSchema.Schema do
     case version do
       @current_draft_schema_url <> _ -> true
       @draft4_schema_url <> _ -> true
+      @draft6_schema_url <> _ -> true
       _ -> false
     end
   end
@@ -134,8 +185,7 @@ defmodule ExJsonSchema.Schema do
     ["" | keys] = unescaped_ref_segments(ref)
     Enum.map keys, fn key ->
       case key =~ ~r/^\d+$/ do
-        true ->
-          String.to_integer(key)
+        true -> String.to_integer(key)
         false -> key
       end
     end
@@ -145,9 +195,12 @@ defmodule ExJsonSchema.Schema do
     if root.refs[url], do: root, else: fetch_and_resolve_remote_schema(root, url)
   end
 
-  defp fetch_and_resolve_remote_schema(root, url)
-      when url == @current_draft_schema_url or url == @draft4_schema_url do
+  defp fetch_and_resolve_remote_schema(root, url) when url == @current_draft_schema_url or url == @draft4_schema_url do
     resolve_remote_schema(root, url, Draft4.schema)
+  end
+
+  defp fetch_and_resolve_remote_schema(root, url) when url == @draft6_schema_url do
+    resolve_remote_schema(root, url, Draft6.schema)
   end
 
   defp fetch_and_resolve_remote_schema(root, url) do
@@ -186,7 +239,7 @@ defmodule ExJsonSchema.Schema do
 
   defp needs_properties_attribute?(schema) do
     Enum.any?(~w(patternProperties additionalProperties), &Map.has_key?(schema, &1))
-      and not Map.has_key?(schema, "properties")
+    and not Map.has_key?(schema, "properties")
   end
 
   defp sanitize_additional_items_attribute(schema) do
@@ -208,8 +261,19 @@ defmodule ExJsonSchema.Schema do
     end)
   end
 
-  defp meta?(schema) do
+  defp choose_meta_schema_validation_module(schema) do
+    case Map.get(schema, "$schema", @current_draft_schema_url <> "#") do
+      @draft6_schema_url <> _ -> Draft6
+      _ -> Draft4
+    end
+  end
+
+  defp meta04?(schema) do
     String.starts_with?(Map.get(schema, "id", ""), @draft4_schema_url)
+  end
+
+  defp meta06?(schema) do
+    String.starts_with?(Map.get(schema, "id", ""), @draft6_schema_url)
   end
 
   defp get_ref_schema_with_schema(nil, _, ref) do
