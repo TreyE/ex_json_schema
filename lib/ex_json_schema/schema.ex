@@ -21,10 +21,7 @@ defmodule ExJsonSchema.Schema do
   @draft4_schema_url "http://json-schema.org/draft-04/schema"
   @draft6_schema_url "http://json-schema.org/draft-06/schema"
 
-  @spec resolve(boolean) :: Root.t | no_return
-  def resolve(false) do
-    %Root{schema: 
-      %{"not" =>
+  @false_value_schema %{"not" =>
       %{"anyOf" => [
         %{"type" => "object"},   
         %{"type" => "array"},   
@@ -32,18 +29,24 @@ defmodule ExJsonSchema.Schema do
         %{"type" => "string"},   
         %{"type" => "number"},   
         %{"type" => "null"}   
-      ]}}}
-  end
+      ]}}
 
-  def resolve(true) do
-    %Root{schema: %{"anyOf" => [
+  @true_value_schema %{"anyOf" => [
         %{"type" => "object"},   
         %{"type" => "array"},   
         %{"type" => "boolean"},   
         %{"type" => "string"},   
         %{"type" => "number"},   
         %{"type" => "null"}   
-      ]}}
+      ]}
+
+  @spec resolve(boolean) :: Root.t | no_return
+  def resolve(false) do
+    %Root{schema: @false_value_schema}
+  end
+
+  def resolve(true) do
+    %Root{schema: @true_value_schema}
   end
 
   @spec resolve(Root.t) :: Root.t | no_return
@@ -62,24 +65,11 @@ defmodule ExJsonSchema.Schema do
   end
 
   defp resolve_root(false) do
-    %Root{schema: 
-      %{"anyOf" => [
-          %{"type" => "null"}
-        ]} 
-    }
+    %Root{schema: @false_value_schema}
   end
 
   defp resolve_root(true) do
-    %Root{schema: 
-      %{"anyOf" => [
-          %{"type" => "object"},
-          %{"type" => "array"},
-          %{"type" => "boolean"},
-          %{"type" => "string"},
-          %{"type" => "number"},
-          %{"type" => "null"}
-        ]} 
-    }
+    %Root{schema: @true_value_schema}
   end
 
   defp resolve_root(root) do
@@ -130,6 +120,58 @@ defmodule ExJsonSchema.Schema do
   defp resolve_property(root, {key, value}, scope) when is_map(value) do
     {root, resolved} = resolve_with_root(root, value, scope)
     {root, {key, resolved}}
+  end
+
+  defp resolve_property(root, {"not", true}, scope) do
+    {root, {"not", @true_value_schema}}
+  end
+
+  defp resolve_property(root, {"not", false}, scope) do
+    {root, {"not", @false_value_schema}}
+  end
+
+  defp resolve_property(root, {"oneOf", values}, scope) when is_list(values) do
+    {root, values} = Enum.reduce values, {root, []}, fn (value, {root, values}) ->
+      case value do
+        true -> {root, [@true_value_schema|values]}
+        false -> {root, [@false_value_schema|values]}
+        _ -> {root, resolved} = resolve_with_root(root, value, scope)
+             {root, [resolved | values]}
+      end
+    end
+    {root, {"oneOf", Enum.reverse(values)}}
+  end
+
+  defp resolve_property(root, {"allOf", values}, scope) when is_list(values) do
+    {root, values} = Enum.reduce values, {root, []}, fn (value, {root, values}) ->
+      case value do
+        true -> {root, [@true_value_schema|values]}
+        false -> {root, [@false_value_schema|values]}
+        _ -> {root, resolved} = resolve_with_root(root, value, scope)
+             {root, [resolved | values]}
+      end
+    end
+    {root, {"allOf", Enum.reverse(values)}}
+  end
+
+  defp resolve_property(root, {"anyOf", values}, scope) when is_list(values) do
+    {root, values} = Enum.reduce values, {root, []}, fn (value, {root, values}) ->
+      case value do
+        true -> {root, [@true_value_schema|values]}
+        false -> {root, [@false_value_schema|values]}
+        _ -> {root, resolved} = resolve_with_root(root, value, scope)
+             {root, [resolved | values]}
+      end
+    end
+    {root, {"anyOf", Enum.reverse(values)}}
+  end
+
+  defp resolve_property(root, {key, values}, scope) when is_list(values) do
+    {root, values} = Enum.reduce values, {root, []}, fn (value, {root, values}) ->
+      {root, resolved} = resolve_with_root(root, value, scope)
+      {root, [resolved | values]}
+    end
+    {root, {key, Enum.reverse(values)}}
   end
 
   defp resolve_property(root, {key, values}, scope) when is_list(values) do
